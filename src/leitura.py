@@ -1,4 +1,12 @@
+"""
+Responsável pela leitura de planilhas Excel (.xlsx e .xls).
 
+Verifica o recebimento, o caminho, o formato e o conteúdo do
+arquivo. Retorna os dados em um DataFrame do Pandas para as
+próximas etapas do ETL.
+
+Preparado para receber arquivos enviados pela interface.
+"""
 import os
 import pandas as pd
 
