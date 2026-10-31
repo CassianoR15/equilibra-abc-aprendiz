@@ -1,259 +1,192 @@
+
 """
-Módulo principal do processo ETL.
+Módulo principal de ETL do Equilibra.
 
-Responsável por coordenar as etapas de processamento dos dados
-dos alunos, integrando os módulos de leitura, validação,
-padronização e identificação de inconsistências.
+Integra a leitura, padronização, validação e preparação dos dados
+das abas Alunos e Turmas.
 
-Recebe a planilha enviada pelo usuário e executa o fluxo de
-tratamento dos dados, retornando um resultado estruturado com
-o status do processamento, os dados preparados, possíveis
-inconsistências e duplicidades que precisam de confirmação.
+O processamento só é concluído quando os dados estruturais estão
+válidos e a capacidade total das turmas é suficiente para atender
+a quantidade de alunos.
 
-Foi organizado para permitir a integração com a interface,
-que poderá enviar o arquivo e apresentar os resultados ao
-usuário antes de prosseguir para a etapa de otimização.
+As inconsistências de cadastro são apresentadas em relatório.
+Nenhum aluno é excluído automaticamente.
 """
-import re
-import unicodedata
 
-# Importa as funções dos módulos do projeto
 from src.leitura import ler_planilha
-from src.validacao import validar_colunas
+from src.validacao import (
+    validar_colunas,
+    validar_dados_alunos,
+    validar_dados_turmas,
+    validar_capacidade_total
+)
 from src.padronizacao import padronizar_dados
 from src.inconsistencias import identificar_inconsistencias
-
-# Normaliza valores para comparar registros duplicados
-def normalizar_valor(valor):
-
-    if not isinstance(valor, str):
-        return valor
-
-    valor = valor.strip().upper()
-    valor = re.sub(r"\s+", " ", valor)
-
-    # Remove acentos para comparação
-    valor = unicodedata.normalize("NFKD", valor)
-    valor = "".join(
-        caractere for caractere in valor
-        if not unicodedata.combining(caractere)
-    )
-
-    return valor
+from src.recursos import cadastrar_turmas
 
 
-# Cria uma chave para identificar um aluno
-def criar_chave_aluno(linha):
+def converter_erros(resultado):
+    """
+    Converte diferentes formatos de retorno das validações
+    em uma lista de mensagens de erro.
+    """
+    if resultado is None:
+        return []
 
-    return (
-        normalizar_valor(linha["nome"]),
-        normalizar_valor(linha["sexo"]),
-        normalizar_valor(linha["disponibilidade"])
-    )
+    if isinstance(resultado, tuple):
+        sucesso, mensagem = resultado
 
+        if sucesso:
+            return []
 
-# Recupera as chaves dos grupos de duplicidades
-def capturar_duplicidades(df, relatorio):
+        if isinstance(mensagem, list):
+            return mensagem
 
-    chaves = set()
+        return [str(mensagem)]
 
-    duplicidades = relatorio[
-        relatorio["problema"].str.contains(
-            "Duplicidade exata",
-            case=False,
-            na=False
-        )
-    ]
+    if isinstance(resultado, list):
+        return [str(erro) for erro in resultado]
 
-    for _, duplicidade in duplicidades.iterrows():
+    if isinstance(resultado, dict):
+        if resultado.get("sucesso", False):
+            return []
 
-        # Recupera os números das linhas indicadas no relatório
-        linhas = [
-            int(linha.strip())
-            for linha in str(duplicidade["linha"]).split(",")
-        ]
+        erros = resultado.get("erros", [])
+        return [str(erro) for erro in erros]
 
-        # Identifica os registros correspondentes na tabela
-        for numero_linha in linhas:
+    if isinstance(resultado, bool):
+        return [] if resultado else ["Falha na validação dos dados."]
 
-            indice = numero_linha - 2
-
-            if 0 <= indice < len(df):
-
-                aluno = df.iloc[indice]
-                chaves.add(criar_chave_aluno(aluno))
-
-    return chaves
+    return [str(resultado)]
 
 
-# Remove somente as repetições confirmadas
-def remover_duplicidades_confirmadas(df, chaves_confirmadas):
-
-    if not chaves_confirmadas:
-        return df.copy()
-
-    # Padroniza uma cópia para realizar a comparação
-    df_tratado = padronizar_dados(df)
-
-    indices_remover = []
-    chaves_encontradas = set()
-
-    for indice, (_, aluno) in enumerate(df_tratado.iterrows()):
-
-        chave = criar_chave_aluno(aluno)
-
-        # Considera apenas os grupos de duplicidade confirmados
-        if chave in chaves_confirmadas:
-
-            if chave in chaves_encontradas:
-                indices_remover.append(indice)
-            else:
-                chaves_encontradas.add(chave)
-
-    # Remove as repetições apenas da tabela em memória
-    df = df.drop(
-        df.index[indices_remover]
-    ).reset_index(drop=True)
-
-    return df
-
-
-# Organiza o retorno do processamento
 def criar_retorno(
     status,
     mensagem,
     alunos=None,
-    relatorio=None,
-    duplicidades_pendentes=None
+    turmas=None,
+    inconsistencias=None,
+    erros=None
 ):
-
+    """Padroniza o retorno do processamento do ETL."""
     return {
         "status": status,
         "mensagem": mensagem,
         "alunos": alunos,
-        "relatorio": relatorio,
-        "duplicidades_pendentes": (
-            duplicidades_pendentes
-            if duplicidades_pendentes is not None
-            else set()
-        )
+        "turmas": turmas,
+        "inconsistencias": inconsistencias,
+        "erros": erros or []
     }
 
 
-# Função principal do ETL
-def main(arquivo, duplicidades_confirmadas=None):
+def main(arquivo):
+    """
+    Executa o fluxo completo de ETL.
 
-    # Guarda as duplicidades que o usuário já confirmou
-    if duplicidades_confirmadas is None:
-        duplicidades_confirmadas = set()
+    Parâmetros:
+        arquivo: caminho ou objeto do arquivo Excel.
 
+    Retorno:
+        Dicionário contendo o status do processamento,
+        os dados preparados, inconsistências e erros.
+    """
+
+    # 1. Leitura das duas abas
     try:
+        dados = ler_planilha(arquivo)
 
-        # 1. Realiza a leitura da planilha
-        df = ler_planilha(arquivo)
-
-        # 2. Verifica se as colunas obrigatórias estão presentes
-        problemas_estruturais = validar_colunas(df)
-
-        if problemas_estruturais:
-
-            return criar_retorno(
-                status="erro_estrutural",
-                mensagem="A planilha possui problemas na estrutura.",
-                relatorio=problemas_estruturais
-            )
-
-        # 3. Padroniza os nomes das colunas para os próximos módulos
-        df.columns = [
-            str(coluna).strip().lower()
-            for coluna in df.columns
-        ]
-
-        # 4. Remove as duplicidades que já foram confirmadas
-        df = remover_duplicidades_confirmadas(
-            df,
-            duplicidades_confirmadas
-        )
-
-        # 5. Padroniza os dados dos alunos
-        df_tratado = padronizar_dados(df)
-
-        # 6. Identifica as inconsistências
-        relatorio = identificar_inconsistencias(df_tratado)
-
-        # 7. Verifica se existem inconsistências
-        if relatorio is not None:
-
-            # Identifica as duplicidades ainda não confirmadas
-            chaves_encontradas = capturar_duplicidades(
-                df_tratado,
-                relatorio
-            )
-
-            novas_duplicidades = (
-                chaves_encontradas - duplicidades_confirmadas
-            )
-
-            # Se não houver outros problemas, aguarda a confirmação
-            outros_problemas = relatorio[
-                ~relatorio["problema"].str.contains(
-                    "Duplicidade exata",
-                    case=False,
-                    na=False
-                )
-            ]
-
-            if not outros_problemas.empty:
-
-                return criar_retorno(
-                    status="inconsistencias",
-                    mensagem=(
-                        "Foram encontradas inconsistências "
-                        "que precisam ser verificadas."
-                    ),
-                    relatorio=relatorio,
-                    duplicidades_pendentes=novas_duplicidades
-                )
-
-            if novas_duplicidades:
-
-                return criar_retorno(
-                    status="aguardando_confirmacao_duplicidades",
-                    mensagem=(
-                        "Foram encontrados possíveis registros "
-                        "duplicados. É necessária a confirmação."
-                    ),
-                    relatorio=relatorio,
-                    duplicidades_pendentes=novas_duplicidades
-                )
-
-        # 8. Planilha validada
+    except (ValueError, TypeError, OSError) as erro:
         return criar_retorno(
-            status="planilha_validada",
-            mensagem="Planilha validada com sucesso.",
-            alunos=df_tratado
+            "erro",
+            "Não foi possível ler a planilha.",
+            erros=[str(erro)]
         )
 
-    except FileNotFoundError as erro:
+    # 2. Padronização dos dados
+    try:
+        dados = padronizar_dados(dados)
 
+    except (ValueError, TypeError, KeyError) as erro:
         return criar_retorno(
-            status="erro",
-            mensagem=str(erro)
+            "erro",
+            "Não foi possível padronizar os dados.",
+            erros=[str(erro)]
         )
 
-    except PermissionError:
+    alunos = dados["alunos"]
+    configuracoes_turmas = dados["turmas"]
 
+    # 3. Validação estrutural das colunas
+    erros = converter_erros(validar_colunas(dados))
+
+    if erros:
         return criar_retorno(
-            status="erro",
-            mensagem=(
-                "Não foi possível acessar o arquivo. "
-                "Verifique se ele está aberto em outro programa."
-            )
+            "erro",
+            "A planilha possui problemas na estrutura das colunas.",
+            erros=erros
         )
 
-    except ValueError as erro:
+    # 4. Validação dos dados dos alunos
+    erros_alunos = converter_erros(
+        validar_dados_alunos(alunos)
+    )
 
+    if erros_alunos:
         return criar_retorno(
-            status="erro",
-            mensagem=str(erro)
+            "erro",
+            "A aba Alunos possui dados inválidos.",
+            alunos=alunos,
+            erros=erros_alunos
         )
+
+    # 5. Validação das configurações das turmas
+    erros_turmas = converter_erros(
+        validar_dados_turmas(configuracoes_turmas)
+    )
+
+    if erros_turmas:
+        return criar_retorno(
+            "erro",
+            "A aba Turmas possui dados inválidos.",
+            alunos=alunos,
+            erros=erros_turmas
+        )
+
+    # 6. Verificação da capacidade total
+    erros_capacidade = converter_erros(
+        validar_capacidade_total(alunos, configuracoes_turmas)
+    )
+
+    if erros_capacidade:
+        return criar_retorno(
+            "erro",
+            "A capacidade total das turmas é insuficiente.",
+            alunos=alunos,
+            erros=erros_capacidade
+        )
+
+    # 7. Identificação de inconsistências nos alunos
+    inconsistencias = identificar_inconsistencias(alunos)
+
+    # 8. Geração das turmas individuais
+    resultado_turmas = cadastrar_turmas(configuracoes_turmas)
+
+    if not resultado_turmas["sucesso"]:
+        return criar_retorno(
+            "erro",
+            "Não foi possível preparar as turmas.",
+            alunos=alunos,
+            inconsistencias=inconsistencias,
+            erros=resultado_turmas["erros"]
+        )
+
+    turmas = resultado_turmas["turmas"]
+
+    # 9. Retorno dos dados preparados
+    return criar_retorno(
+        "sucesso",
+        "Dados validados e preparados para a otimização.",
+        alunos=alunos,
+        turmas=turmas,
+        inconsistencias=inconsistencias
+    )
