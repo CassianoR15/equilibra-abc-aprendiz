@@ -1,3 +1,11 @@
+"""
+Responsável pela validação estrutural da planilha.
+
+Verifica a presença das colunas obrigatórias: nome, sexo e
+disponibilidade. Identifica colunas ausentes e retorna as
+mensagens de erro para impedir o processamento de bases
+com estrutura inadequada.
+"""
 
 # Colunas obrigatórias da tabela de alunos
 COLUNAS_OBRIGATORIAS = [
