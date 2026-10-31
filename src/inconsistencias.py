@@ -1,4 +1,16 @@
+"""
+Responsável pela identificação e classificação de inconsistências.
 
+Verifica valores ausentes ou inválidos, tipos inadequados,
+nomes suspeitos, linhas vazias, duplicidades exatas,
+conflitos de disponibilidade e homônimos.
+
+Retorna um DataFrame com a linha, coluna, valor, categoria,
+descrição do problema e orientação para correção.
+
+As informações poderão ser apresentadas na interface para
+que o usuário revise e corrija os problemas antes da otimização.
+"""
 import pandas as pd
 import re
 import unicodedata
