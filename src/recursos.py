@@ -1,7 +1,15 @@
+"""
+Responsável pelo cadastro, padronização e validação das turmas.
 
+Recebe os dados informados pelo usuário na interface, incluindo
+identificação, turno e capacidade das turmas.
+
+Retorna as turmas cadastradas, erros encontrados e possíveis
+confirmações pendentes para revisão do usuário.
+
+Os dados preparados serão utilizados pelo modelo de otimização.
+"""
 # Cadastro e validação das turmas
-
-
 # Padroniza o turno informado
 def padronizar_turno(turno):
 
