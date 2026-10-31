@@ -1,4 +1,19 @@
+"""
+Módulo principal do processo ETL.
 
+Responsável por coordenar as etapas de processamento dos dados
+dos alunos, integrando os módulos de leitura, validação,
+padronização e identificação de inconsistências.
+
+Recebe a planilha enviada pelo usuário e executa o fluxo de
+tratamento dos dados, retornando um resultado estruturado com
+o status do processamento, os dados preparados, possíveis
+inconsistências e duplicidades que precisam de confirmação.
+
+Foi organizado para permitir a integração com a interface,
+que poderá enviar o arquivo e apresentar os resultados ao
+usuário antes de prosseguir para a etapa de otimização.
+"""
 import re
 import unicodedata
 
