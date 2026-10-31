@@ -1,67 +1,139 @@
-"""
-Responsável pela limpeza e padronização dos dados dos alunos.
 
-Remove espaços desnecessários, padroniza a escrita dos nomes,
-os valores de sexo e as disponibilidades, preparando os dados
-para as verificações e para o modelo de otimização.
 """
+Módulo de padronização dos dados do Equilibra.
+
+Responsável por limpar espaços, normalizar nomes de colunas e
+padronizar os valores das abas Alunos e Turmas antes da validação
+e do envio dos dados ao modelo de otimização.
+"""
+
 import re
+import unicodedata
 
-# Remove espaços no início e no final e substitui espaços repetidos por apenas um
+from src.validacao import normalizar_colunas
+
+
 def limpar_espacos(valor):
-
+    """Remove espaços extras no início, fim e entre palavras."""
     if isinstance(valor, str):
         valor = valor.strip()
         valor = re.sub(r"\s+", " ", valor)
+
     return valor
 
-#Padroniza os valores da tabela de alunos
-def padronizar_dados(df):
 
-    #Cria uma cópia da tabela para preservar os dados originais
-    df = df.copy()
+def remover_acentos(valor):
+    """Remove acentos de um texto para facilitar a comparação."""
+    if not isinstance(valor, str):
+        return valor
 
-    #1. Limpa os espaços extras nas três colunas
-    colunas = ["nome", "sexo", "disponibilidade"]
-
-    for coluna in colunas:
-        df[coluna] = df[coluna].map(limpar_espacos)
-
-    #2. Padroniza os nomes, deixando a primeira letra de cada palavra maiúscula
-    df["nome"] = df["nome"].map(
-        lambda valor: valor.title()
-        if isinstance(valor, str) else valor
+    texto = unicodedata.normalize("NFKD", valor)
+    return "".join(
+        caractere
+        for caractere in texto
+        if not unicodedata.combining(caractere)
     )
 
-    #3. Padroniza o sexo, convertendo as diferentes formas de escrita para F ou M
+
+def padronizar_texto(valor):
+    """Limpa espaços, remove acentos e converte o texto para maiúsculas."""
+    if isinstance(valor, str):
+        valor = limpar_espacos(valor)
+        valor = remover_acentos(valor)
+        valor = valor.upper()
+
+    return valor
+
+
+def padronizar_alunos(df):
+    """Padroniza os dados da aba Alunos."""
+    df = normalizar_colunas(df.copy())
+
+    colunas_texto = ["nome", "sexo", "disponibilidade"]
+
+    for coluna in colunas_texto:
+        if coluna in df.columns:
+            df[coluna] = df[coluna].map(limpar_espacos)
+
+    if "nome" in df.columns:
+        df["nome"] = df["nome"].map(
+            lambda valor: valor.title() if isinstance(valor, str) else valor
+        )
+
     equivalencia_sexo = {
         "F": "F",
         "FEM": "F",
         "FEMININO": "F",
         "M": "M",
         "MASC": "M",
-        "MASCULINO": "M"
+        "MASCULINO": "M",
     }
 
-    #Converte os valores para maiúsculo antes de verificar as equivalências
-    df["sexo"] = df["sexo"].map(
-        lambda valor: equivalencia_sexo.get(
-            valor.upper(), valor.upper()
-        ) if isinstance(valor, str) else valor
-    )
+    if "sexo" in df.columns:
+        df["sexo"] = df["sexo"].map(
+            lambda valor: equivalencia_sexo.get(
+                padronizar_texto(valor),
+                padronizar_texto(valor)
+            )
+        )
 
-    #4. Padroniza a disponibilidade, uniformizando maiúsculas e acentuação
-    equivalencia_disponibilidade = {
+    equivalencia_turno = {
         "MANHA": "MANHÃ",
-        "MANHÃ": "MANHÃ",
-        "TARDE": "TARDE"
+        "TARDE": "TARDE",
     }
 
-    #Converte os valores para maiúsculo e aplica as equivalências definidas
-    df["disponibilidade"] = df["disponibilidade"].map(
-        lambda valor: equivalencia_disponibilidade.get(
-            valor.upper(), valor.upper()
-        ) if isinstance(valor, str) else valor
-    )
-    #Retorna a tabela com os valores padronizados
+    if "disponibilidade" in df.columns:
+        df["disponibilidade"] = df["disponibilidade"].map(
+            lambda valor: equivalencia_turno.get(
+                padronizar_texto(valor),
+                padronizar_texto(valor)
+            )
+        )
+
     return df
+
+
+def padronizar_turmas(df):
+    """Padroniza os dados da aba Turmas."""
+    df = normalizar_colunas(df.copy())
+
+    if "turno" in df.columns:
+        equivalencia_turno = {
+            "MANHA": "MANHÃ",
+            "TARDE": "TARDE",
+        }
+
+        df["turno"] = df["turno"].map(
+            lambda valor: equivalencia_turno.get(
+                padronizar_texto(valor),
+                padronizar_texto(valor)
+            )
+        )
+
+    return df
+
+
+def padronizar_dados(dados):
+    """
+    Padroniza as duas abas recebidas pela leitura da planilha.
+
+    Também mantém compatibilidade com chamadas antigas que enviam
+    diretamente um DataFrame de alunos.
+    """
+    if hasattr(dados, "columns"):
+        return padronizar_alunos(dados)
+
+    if not isinstance(dados, dict):
+        raise TypeError(
+            "Os dados devem ser um DataFrame ou um dicionário com as abas."
+        )
+
+    if "alunos" not in dados or "turmas" not in dados:
+        raise ValueError(
+            "Os dados devem conter as abas 'alunos' e 'turmas'."
+        )
+
+    return {
+        "alunos": padronizar_alunos(dados["alunos"]),
+        "turmas": padronizar_turmas(dados["turmas"]),
+    }
