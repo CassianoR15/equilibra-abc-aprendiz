@@ -1,53 +1,60 @@
+import re
 
-import unicodedata
+# Remove espaços no início e no final e substitui espaços repetidos por apenas um
+def limpar_espacos(valor):
 
+    if isinstance(valor, str):
+        valor = valor.strip()
+        valor = re.sub(r"\s+", " ", valor)
+    return valor
 
-def normalizar_texto(valor):
+#Padroniza os valores da tabela de alunos
+def padronizar_dados(df):
 
-    if valor is None:
-        return ""
+    #Cria uma cópia da tabela para preservar os dados originais
+    df = df.copy()
 
-    texto = str(valor).strip().upper()
+    #1. Limpa os espaços extras nas três colunas
+    colunas = ["nome", "sexo", "disponibilidade"]
 
-    texto = unicodedata.normalize("NFKD", texto)
+    for coluna in colunas:
+        df[coluna] = df[coluna].map(limpar_espacos)
 
-    return "".join(
-        c for c in texto
-        if not unicodedata.combining(c)
+    #2. Padroniza os nomes, deixando a primeira letra de cada palavra maiúscula
+    df["nome"] = df["nome"].map(
+        lambda valor: valor.title()
+        if isinstance(valor, str) else valor
     )
 
+    #3. Padroniza o sexo, convertendo as diferentes formas de escrita para F ou M
+    equivalencia_sexo = {
+        "F": "F",
+        "FEM": "F",
+        "FEMININO": "F",
+        "M": "M",
+        "MASC": "M",
+        "MASCULINO": "M"
+    }
 
-def padronizar_nome(valor):
-
-    if valor is None:
-        return ""
-
-    return " ".join(
-        str(valor).strip().split()
+    #Converte os valores para maiúsculo antes de verificar as equivalências
+    df["sexo"] = df["sexo"].map(
+        lambda valor: equivalencia_sexo.get(
+            valor.upper(), valor.upper()
+        ) if isinstance(valor, str) else valor
     )
 
+    #4. Padroniza a disponibilidade, uniformizando maiúsculas e acentuação
+    equivalencia_disponibilidade = {
+        "MANHA": "MANHÃ",
+        "MANHÃ": "MANHÃ",
+        "TARDE": "TARDE"
+    }
 
-def padronizar_sexo(valor):
-
-    texto = normalizar_texto(valor)
-
-    if texto in ["M", "MASCULINO"]:
-        return "M"
-
-    if texto in ["F", "FEMININO"]:
-        return "F"
-
-    return None
-
-
-def padronizar_disponibilidade(valor):
-
-    texto = normalizar_texto(valor)
-
-    if texto in ["MANHA", "MATUTINO"]:
-        return "MANHA"
-
-    if texto in ["TARDE", "VESPERTINO"]:
-        return "TARDE"
-
-    return None
+    #Converte os valores para maiúsculo e aplica as equivalências definidas
+    df["disponibilidade"] = df["disponibilidade"].map(
+        lambda valor: equivalencia_disponibilidade.get(
+            valor.upper(), valor.upper()
+        ) if isinstance(valor, str) else valor
+    )
+    #Retorna a tabela com os valores padronizados
+    return df

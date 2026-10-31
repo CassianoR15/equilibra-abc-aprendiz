@@ -1,443 +1,244 @@
 
-import pandas as pd
-import unicodedata
 import re
+import unicodedata
 
-from collections import defaultdict
+# Importa as funções dos módulos do projeto
+from src.leitura import ler_planilha
+from src.validacao import validar_colunas
+from src.padronizacao import padronizar_dados
+from src.inconsistencias import identificar_inconsistencias
 
-from src.padronizacao import (
-    padronizar_nome,
-    padronizar_sexo,
-    padronizar_disponibilidade
-)
+# Normaliza valores para comparar registros duplicados
+def normalizar_valor(valor):
+
+    if not isinstance(valor, str):
+        return valor
+
+    valor = valor.strip().upper()
+    valor = re.sub(r"\s+", " ", valor)
+
+    # Remove acentos para comparação
+    valor = unicodedata.normalize("NFKD", valor)
+    valor = "".join(
+        caractere for caractere in valor
+        if not unicodedata.combining(caractere)
+    )
+
+    return valor
 
 
-# =====================================================
-# 1. NORMALIZAÇÃO DOS NOMES DAS COLUNAS
-# =====================================================
+# Cria uma chave para identificar um aluno
+def criar_chave_aluno(linha):
 
-def normalizar_coluna(nome):
-
-    nome = str(nome).strip().upper()
-
-    nome = unicodedata.normalize(
-        "NFKD", nome
-    ).encode("ASCII", "ignore").decode("ASCII")
-
-    nome = re.sub(r"\s+", " ", nome)
-
-    return nome
-
-
-# =====================================================
-# 2. IDENTIFICAÇÃO DAS COLUNAS
-# =====================================================
-
-def identificar_coluna(df, alternativas, nome_campo):
-
-    colunas = {
-        normalizar_coluna(coluna): coluna
-        for coluna in df.columns
-    }
-
-    for alternativa in alternativas:
-
-        alternativa = normalizar_coluna(alternativa)
-
-        if alternativa in colunas:
-            return colunas[alternativa]
-
-    raise ValueError(
-        f"Coluna obrigatória não encontrada: {nome_campo}. "
-        f"Colunas disponíveis: {list(df.columns)}"
+    return (
+        normalizar_valor(linha["nome"]),
+        normalizar_valor(linha["sexo"]),
+        normalizar_valor(linha["disponibilidade"])
     )
 
 
-# =====================================================
-# 3. LEITURA E VALIDAÇÃO DA ABA ALUNOS
-# =====================================================
+# Recupera as chaves dos grupos de duplicidades
+def capturar_duplicidades(df, relatorio):
 
-def processar_alunos(df):
+    chaves = set()
 
-    coluna_nome = identificar_coluna(
-        df,
-        [
-            "NOME",
-            "NOME DO ALUNO",
-            "ALUNO",
-            "RECEBI AS INSTÂNCIAS"
-        ],
-        "Nome do aluno"
-    )
-
-    coluna_sexo = identificar_coluna(
-        df,
-        ["SEXO", "GÊNERO"],
-        "Sexo"
-    )
-
-    coluna_disponibilidade = identificar_coluna(
-        df,
-        ["DISPONIBILIDADE", "TURNO", "PERÍODO"],
-        "Disponibilidade"
-    )
-
-    alunos = []
-    inconsistencias = []
-
-    duplicidades = defaultdict(list)
-
-    for indice, linha in df.iterrows():
-
-        numero_linha = indice + 2
-
-        nome_original = linha[coluna_nome]
-
-        sexo_original = linha[coluna_sexo]
-
-        disponibilidade_original = linha[
-            coluna_disponibilidade
-        ]
-
-        # ---------------------------------------------
-        # Nome
-        # ---------------------------------------------
-
-        nome = padronizar_nome(nome_original)
-
-        if not nome:
-
-            inconsistencias.append({
-                "linha": numero_linha,
-                "aluno": "",
-                "campo": "Nome",
-                "problema": "Nome vazio",
-                "tipo": "BLOQUEANTE"
-            })
-
-            continue
-
-        # ---------------------------------------------
-        # Sexo
-        # ---------------------------------------------
-
-        sexo = padronizar_sexo(sexo_original)
-
-        if sexo not in ["M", "F"]:
-
-            inconsistencias.append({
-                "linha": numero_linha,
-                "aluno": nome,
-                "campo": "Sexo",
-                "problema": f"Sexo inválido: {sexo_original}",
-                "tipo": "BLOQUEANTE"
-            })
-
-            continue
-
-        # ---------------------------------------------
-        # Disponibilidade
-        # ---------------------------------------------
-
-        disponibilidade = padronizar_disponibilidade(
-            disponibilidade_original
+    duplicidades = relatorio[
+        relatorio["problema"].str.contains(
+            "Duplicidade exata",
+            case=False,
+            na=False
         )
-
-        if disponibilidade not in ["MANHA", "TARDE"]:
-
-            inconsistencias.append({
-                "linha": numero_linha,
-                "aluno": nome,
-                "campo": "Disponibilidade",
-                "problema": (
-                    f"Disponibilidade inválida: "
-                    f"{disponibilidade_original}"
-                ),
-                "tipo": "BLOQUEANTE"
-            })
-
-            continue
-
-        # ---------------------------------------------
-        # Identificação de duplicidades
-        # ---------------------------------------------
-
-        chave_nome = normalizar_coluna(nome)
-
-        duplicidades[chave_nome].append({
-            "linha": numero_linha,
-            "nome": nome
-        })
-
-        # ---------------------------------------------
-        # Cadastro do aluno
-        # ---------------------------------------------
-
-        alunos.append({
-            "id": len(alunos) + 1,
-            "linha": numero_linha,
-            "nome": nome,
-            "sexo": sexo,
-            "disponibilidade": [disponibilidade]
-        })
-
-    # ---------------------------------------------
-    # Alertas de nomes duplicados
-    # ---------------------------------------------
-
-    for registros in duplicidades.values():
-
-        if len(registros) > 1:
-
-            for registro in registros:
-
-                inconsistencias.append({
-                    "linha": registro["linha"],
-                    "aluno": registro["nome"],
-                    "campo": "Nome",
-                    "problema": (
-                        "Possível duplicidade de cadastro"
-                    ),
-                    "tipo": "ALERTA"
-                })
-
-    return alunos, inconsistencias
-
-
-# =====================================================
-# 4. LEITURA E VALIDAÇÃO DA ABA TURMAS
-# =====================================================
-
-
-def processar_turmas(df):
-
-    turmas = []
-    inconsistencias = []
-
-    # A planilha possui duas colunas:
-    # Recursos | Quantidade
-
-    colunas = list(df.columns)
-
-    if len(colunas) < 2:
-        raise ValueError(
-            "A aba Turmas precisa ter as colunas Recursos e Quantidade."
-        )
-
-    coluna_recurso = colunas[0]
-    coluna_quantidade = colunas[1]
-
-    recursos = {}
-
-    for indice, linha in df.iterrows():
-
-        recurso = str(
-            linha[coluna_recurso]
-        ).strip().lower()
-
-        quantidade = pd.to_numeric(
-            linha[coluna_quantidade],
-            errors="coerce"
-        )
-
-        if recurso in ["nan", "none", ""]:
-            continue
-
-        recursos[recurso] = quantidade
-
-    # Parâmetros da planilha
-
-    configuracoes = [
-        ("turmas_manha", "vagas_manha", "MANHA"),
-        ("turmas_tarde", "vagas_tarde", "TARDE")
     ]
 
-    id_turma = 1
+    for _, duplicidade in duplicidades.iterrows():
 
-    for recurso_turmas, recurso_vagas, turno in configuracoes:
+        # Recupera os números das linhas indicadas no relatório
+        linhas = [
+            int(linha.strip())
+            for linha in str(duplicidade["linha"]).split(",")
+        ]
 
-        quantidade = recursos.get(recurso_turmas)
-        capacidade = recursos.get(recurso_vagas)
+        # Identifica os registros correspondentes na tabela
+        for numero_linha in linhas:
 
-        if (
-            quantidade is None
-            or capacidade is None
-            or pd.isna(quantidade)
-            or pd.isna(capacidade)
-        ):
+            indice = numero_linha - 2
 
-            inconsistencias.append({
-                "linha": "",
-                "aluno": "",
-                "campo": "Turmas",
-                "problema": (
-                    f"Parâmetros ausentes para o turno {turno}"
-                ),
-                "tipo": "BLOQUEANTE"
-            })
+            if 0 <= indice < len(df):
 
-            continue
+                aluno = df.iloc[indice]
+                chaves.add(criar_chave_aluno(aluno))
 
-        if (
-            quantidade <= 0
-            or capacidade <= 0
-            or quantidade % 1 != 0
-            or capacidade % 1 != 0
-        ):
-
-            inconsistencias.append({
-                "linha": "",
-                "aluno": "",
-                "campo": "Turmas",
-                "problema": (
-                    f"Quantidade de turmas e vagas "
-                    f"devem ser inteiros positivos: {turno}"
-                ),
-                "tipo": "BLOQUEANTE"
-            })
-
-            continue
-
-        for _ in range(int(quantidade)):
-
-            turmas.append({
-                "id": id_turma,
-                "turno": turno,
-                "capacidade": int(capacidade)
-            })
-
-            id_turma += 1
-
-    return turmas, inconsistencias
+    return chaves
 
 
+# Remove somente as repetições confirmadas
+def remover_duplicidades_confirmadas(df, chaves_confirmadas):
 
-# =====================================================
-# 5. VALIDAÇÃO DA CAPACIDADE TOTAL
-# =====================================================
+    if not chaves_confirmadas:
+        return df.copy()
 
-def validar_capacidade(alunos, turmas):
+    # Padroniza uma cópia para realizar a comparação
+    df_tratado = padronizar_dados(df)
 
-    inconsistencias = []
+    indices_remover = []
+    chaves_encontradas = set()
 
-    for turno in ["MANHA", "TARDE"]:
+    for indice, (_, aluno) in enumerate(df_tratado.iterrows()):
 
-        total_alunos = sum(
-            1
-            for aluno in alunos
-            if aluno["disponibilidade"] == [turno]
+        chave = criar_chave_aluno(aluno)
+
+        # Considera apenas os grupos de duplicidade confirmados
+        if chave in chaves_confirmadas:
+
+            if chave in chaves_encontradas:
+                indices_remover.append(indice)
+            else:
+                chaves_encontradas.add(chave)
+
+    # Remove as repetições apenas da tabela em memória
+    df = df.drop(
+        df.index[indices_remover]
+    ).reset_index(drop=True)
+
+    return df
+
+
+# Organiza o retorno do processamento
+def criar_retorno(
+    status,
+    mensagem,
+    alunos=None,
+    relatorio=None,
+    duplicidades_pendentes=None
+):
+
+    return {
+        "status": status,
+        "mensagem": mensagem,
+        "alunos": alunos,
+        "relatorio": relatorio,
+        "duplicidades_pendentes": (
+            duplicidades_pendentes
+            if duplicidades_pendentes is not None
+            else set()
         )
-
-        total_vagas = sum(
-            turma["capacidade"]
-            for turma in turmas
-            if turma["turno"] == turno
-        )
-
-        if total_alunos > total_vagas:
-
-            inconsistencias.append({
-                "linha": "",
-                "aluno": "",
-                "campo": "Capacidade",
-                "problema": (
-                    f"{turno}: {total_alunos} alunos "
-                    f"para {total_vagas} vagas disponíveis"
-                ),
-                "tipo": "BLOQUEANTE"
-            })
-
-    return inconsistencias
+    }
 
 
-# =====================================================
-# 6. FUNÇÃO PRINCIPAL DE LEITURA DO EXCEL
-# =====================================================
+# Função principal do ETL
+def main(arquivo, duplicidades_confirmadas=None):
 
-def ler_excel(caminho):
+    # Guarda as duplicidades que o usuário já confirmou
+    if duplicidades_confirmadas is None:
+        duplicidades_confirmadas = set()
 
     try:
 
-        arquivo = pd.ExcelFile(caminho)
+        # 1. Realiza a leitura da planilha
+        df = ler_planilha(arquivo)
 
-    except Exception as erro:
+        # 2. Verifica se as colunas obrigatórias estão presentes
+        problemas_estruturais = validar_colunas(df)
 
-        raise ValueError(
-            f"Não foi possível abrir o Excel: {erro}"
+        if problemas_estruturais:
+
+            return criar_retorno(
+                status="erro_estrutural",
+                mensagem="A planilha possui problemas na estrutura.",
+                relatorio=problemas_estruturais
+            )
+
+        # 3. Padroniza os nomes das colunas para os próximos módulos
+        df.columns = [
+            str(coluna).strip().lower()
+            for coluna in df.columns
+        ]
+
+        # 4. Remove as duplicidades que já foram confirmadas
+        df = remover_duplicidades_confirmadas(
+            df,
+            duplicidades_confirmadas
         )
 
-    if "Alunos" not in arquivo.sheet_names:
+        # 5. Padroniza os dados dos alunos
+        df_tratado = padronizar_dados(df)
 
-        raise ValueError(
-            "Aba obrigatória 'Alunos' não encontrada."
+        # 6. Identifica as inconsistências
+        relatorio = identificar_inconsistencias(df_tratado)
+
+        # 7. Verifica se existem inconsistências
+        if relatorio is not None:
+
+            # Identifica as duplicidades ainda não confirmadas
+            chaves_encontradas = capturar_duplicidades(
+                df_tratado,
+                relatorio
+            )
+
+            novas_duplicidades = (
+                chaves_encontradas - duplicidades_confirmadas
+            )
+
+            # Se não houver outros problemas, aguarda a confirmação
+            outros_problemas = relatorio[
+                ~relatorio["problema"].str.contains(
+                    "Duplicidade exata",
+                    case=False,
+                    na=False
+                )
+            ]
+
+            if not outros_problemas.empty:
+
+                return criar_retorno(
+                    status="inconsistencias",
+                    mensagem=(
+                        "Foram encontradas inconsistências "
+                        "que precisam ser verificadas."
+                    ),
+                    relatorio=relatorio,
+                    duplicidades_pendentes=novas_duplicidades
+                )
+
+            if novas_duplicidades:
+
+                return criar_retorno(
+                    status="aguardando_confirmacao_duplicidades",
+                    mensagem=(
+                        "Foram encontrados possíveis registros "
+                        "duplicados. É necessária a confirmação."
+                    ),
+                    relatorio=relatorio,
+                    duplicidades_pendentes=novas_duplicidades
+                )
+
+        # 8. Planilha validada
+        return criar_retorno(
+            status="planilha_validada",
+            mensagem="Planilha validada com sucesso.",
+            alunos=df_tratado
         )
 
-    if "Turmas" not in arquivo.sheet_names:
+    except FileNotFoundError as erro:
 
-        raise ValueError(
-            "Aba obrigatória 'Turmas' não encontrada."
+        return criar_retorno(
+            status="erro",
+            mensagem=str(erro)
         )
 
-    alunos_df = pd.read_excel(
-        caminho,
-        sheet_name="Alunos"
-    )
+    except PermissionError:
 
-    turmas_df = pd.read_excel(
-        caminho,
-        sheet_name="Turmas"
-    )
-
-    if alunos_df.empty:
-
-        raise ValueError(
-            "A aba Alunos não possui registros."
+        return criar_retorno(
+            status="erro",
+            mensagem=(
+                "Não foi possível acessar o arquivo. "
+                "Verifique se ele está aberto em outro programa."
+            )
         )
 
-    if turmas_df.empty:
+    except ValueError as erro:
 
-        raise ValueError(
-            "A aba Turmas não possui registros."
+        return criar_retorno(
+            status="erro",
+            mensagem=str(erro)
         )
-
-    # Processamento dos dados
-
-    alunos, erros_alunos = processar_alunos(
-        alunos_df
-    )
-
-    turmas, erros_turmas = processar_turmas(
-        turmas_df
-    )
-
-    inconsistencias = (
-        erros_alunos
-        + erros_turmas
-    )
-
-    # Verificação de capacidade
-
-    if not any(
-        item["tipo"] == "BLOQUEANTE"
-        for item in inconsistencias
-    ):
-
-        inconsistencias.extend(
-            validar_capacidade(alunos, turmas)
-        )
-
-    # Retorno dos dados
-
-    bloqueantes = [
-        item for item in inconsistencias
-        if item["tipo"] == "BLOQUEANTE"
-    ]
-
-    if bloqueantes:
-
-        raise ValueError(
-            "Foram encontradas inconsistências "
-            "que impedem o ensalamento."
-        )
-
-    return alunos, turmas
