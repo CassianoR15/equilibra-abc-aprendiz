@@ -1,4 +1,14 @@
+"""
+Responsável pela integração entre os dados preparados pelo ETL
+e o modelo de otimização.
 
+Recebe os dados processados e uma função de otimização,
+permitindo conectar as etapas de preparação e distribuição
+dos alunos.
+
+Também contém a estrutura inicial para exportação dos
+resultados em arquivo Excel.
+"""
 def integrar_com_otimizacao(dados, funcao_otimizacao):
 
     # Recebe os dados preparados pelo ETL
