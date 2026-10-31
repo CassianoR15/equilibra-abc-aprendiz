@@ -1,3 +1,10 @@
+"""
+Responsável pela limpeza e padronização dos dados dos alunos.
+
+Remove espaços desnecessários, padroniza a escrita dos nomes,
+os valores de sexo e as disponibilidades, preparando os dados
+para as verificações e para o modelo de otimização.
+"""
 import re
 
 # Remove espaços no início e no final e substitui espaços repetidos por apenas um
