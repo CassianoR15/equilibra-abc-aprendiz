@@ -1,6 +1,10 @@
 .venv/
 .venv-1/
+.venv312/
 __pycache__/
 *.pyc
 .pytest_cache/
 .vscode/
+
+# Arquivos de instâncias para testes
+instancia_*.xlsx

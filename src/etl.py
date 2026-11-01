@@ -2,15 +2,8 @@
 """
 Módulo principal de ETL do Equilibra.
 
-Integra a leitura, padronização, validação e preparação dos dados
-das abas Alunos e Turmas.
-
-O processamento só é concluído quando os dados estruturais estão
-válidos e a capacidade total das turmas é suficiente para atender
-a quantidade de alunos.
-
-As inconsistências de cadastro são apresentadas em relatório.
-Nenhum aluno é excluído automaticamente.
+Realiza leitura, padronização e validação dos dados.
+A otimização só é liberada quando todas as verificações passam.
 """
 
 from src.leitura import ler_planilha
@@ -26,10 +19,8 @@ from src.recursos import cadastrar_turmas
 
 
 def converter_erros(resultado):
-    """
-    Converte diferentes formatos de retorno das validações
-    em uma lista de mensagens de erro.
-    """
+    """Padroniza os diferentes formatos de retorno das validações."""
+
     if resultado is None:
         return []
 
@@ -40,7 +31,7 @@ def converter_erros(resultado):
             return []
 
         if isinstance(mensagem, list):
-            return mensagem
+            return [str(erro) for erro in mensagem]
 
         return [str(mensagem)]
 
@@ -51,8 +42,10 @@ def converter_erros(resultado):
         if resultado.get("sucesso", False):
             return []
 
-        erros = resultado.get("erros", [])
-        return [str(erro) for erro in erros]
+        return [
+            str(erro)
+            for erro in resultado.get("erros", [])
+        ]
 
     if isinstance(resultado, bool):
         return [] if resultado else ["Falha na validação dos dados."]
@@ -68,7 +61,6 @@ def criar_retorno(
     inconsistencias=None,
     erros=None
 ):
-    """Padroniza o retorno do processamento do ETL."""
     return {
         "status": status,
         "mensagem": mensagem,
@@ -80,18 +72,8 @@ def criar_retorno(
 
 
 def main(arquivo):
-    """
-    Executa o fluxo completo de ETL.
 
-    Parâmetros:
-        arquivo: caminho ou objeto do arquivo Excel.
-
-    Retorno:
-        Dicionário contendo o status do processamento,
-        os dados preparados, inconsistências e erros.
-    """
-
-    # 1. Leitura das duas abas
+    # 1. Leitura da planilha
     try:
         dados = ler_planilha(arquivo)
 
@@ -102,7 +84,7 @@ def main(arquivo):
             erros=[str(erro)]
         )
 
-    # 2. Padronização dos dados
+    # 2. Padronização
     try:
         dados = padronizar_dados(dados)
 
@@ -116,30 +98,37 @@ def main(arquivo):
     alunos = dados["alunos"]
     configuracoes_turmas = dados["turmas"]
 
-    # 3. Validação estrutural das colunas
-    erros = converter_erros(validar_colunas(dados))
+    # 3. Validação estrutural
+    erros_colunas = converter_erros(
+        validar_colunas(dados)
+    )
 
-    if erros:
+    if erros_colunas:
         return criar_retorno(
             "erro",
-            "A planilha possui problemas na estrutura das colunas.",
-            erros=erros
+            "Problemas na estrutura da planilha.",
+            erros=erros_colunas
         )
 
-    # 4. Validação dos dados dos alunos
+    # 4. Identificação de inconsistências
+    inconsistencias = identificar_inconsistencias(alunos)
+
+    # 5. Validação dos alunos
     erros_alunos = converter_erros(
         validar_dados_alunos(alunos)
     )
 
-    if erros_alunos:
+    if erros_alunos or inconsistencias is not None:
+
         return criar_retorno(
-            "erro",
-            "A aba Alunos possui dados inválidos.",
+            "inconsistencias",
+            "Foram encontrados problemas nos dados. Corrija a planilha antes de continuar.",
             alunos=alunos,
+            inconsistencias=inconsistencias,
             erros=erros_alunos
         )
 
-    # 5. Validação das configurações das turmas
+    # 6. Validação das configurações das turmas
     erros_turmas = converter_erros(
         validar_dados_turmas(configuracoes_turmas)
     )
@@ -147,14 +136,17 @@ def main(arquivo):
     if erros_turmas:
         return criar_retorno(
             "erro",
-            "A aba Turmas possui dados inválidos.",
+            "Existem problemas nas configurações das turmas.",
             alunos=alunos,
             erros=erros_turmas
         )
 
-    # 6. Verificação da capacidade total
+    # 7. Verificação da capacidade total
     erros_capacidade = converter_erros(
-        validar_capacidade_total(alunos, configuracoes_turmas)
+        validar_capacidade_total(
+            alunos,
+            configuracoes_turmas
+        )
     )
 
     if erros_capacidade:
@@ -165,28 +157,28 @@ def main(arquivo):
             erros=erros_capacidade
         )
 
-    # 7. Identificação de inconsistências nos alunos
-    inconsistencias = identificar_inconsistencias(alunos)
-
-    # 8. Geração das turmas individuais
-    resultado_turmas = cadastrar_turmas(configuracoes_turmas)
+    # 8. Preparação das turmas
+    resultado_turmas = cadastrar_turmas(
+        configuracoes_turmas
+    )
 
     if not resultado_turmas["sucesso"]:
         return criar_retorno(
             "erro",
             "Não foi possível preparar as turmas.",
             alunos=alunos,
-            inconsistencias=inconsistencias,
             erros=resultado_turmas["erros"]
         )
 
-    turmas = resultado_turmas["turmas"]
-
-    # 9. Retorno dos dados preparados
+    # 9. Liberação dos dados para otimização
     return criar_retorno(
         "sucesso",
-        "Dados validados e preparados para a otimização.",
+        "Dados validados e preparados para otimização.",
         alunos=alunos,
-        turmas=turmas,
-        inconsistencias=inconsistencias
+        turmas=resultado_turmas["turmas"]
     )
+
+
+def validar_planilha(arquivo):
+    """Valida a planilha antes da execução da otimização."""
+    return main(arquivo)

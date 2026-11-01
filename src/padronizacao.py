@@ -1,136 +1,122 @@
 
-"""
-Módulo de padronização dos dados do Equilibra.
-
-Responsável por limpar espaços, normalizar nomes de colunas e
-padronizar os valores das abas Alunos e Turmas antes da validação
-e do envio dos dados ao modelo de otimização.
-"""
-
 import re
 import unicodedata
+import pandas as pd
 
 from src.validacao import normalizar_colunas
 
 
 def limpar_espacos(valor):
-    """Remove espaços extras no início, fim e entre palavras."""
     if isinstance(valor, str):
-        valor = valor.strip()
-        valor = re.sub(r"\s+", " ", valor)
-
+        return re.sub(r"\s+", " ", valor.strip())
     return valor
 
 
 def remover_acentos(valor):
-    """Remove acentos de um texto para facilitar a comparação."""
     if not isinstance(valor, str):
         return valor
 
     texto = unicodedata.normalize("NFKD", valor)
+
     return "".join(
-        caractere
-        for caractere in texto
-        if not unicodedata.combining(caractere)
+        c for c in texto
+        if not unicodedata.combining(c)
     )
 
 
 def padronizar_texto(valor):
-    """Limpa espaços, remove acentos e converte o texto para maiúsculas."""
     if isinstance(valor, str):
-        valor = limpar_espacos(valor)
-        valor = remover_acentos(valor)
-        valor = valor.upper()
+        return remover_acentos(
+            limpar_espacos(valor)
+        ).upper()
 
     return valor
 
 
 def padronizar_alunos(df):
-    """Padroniza os dados da aba Alunos."""
-    df = normalizar_colunas(df.copy())
+    df = df.copy()
 
-    colunas_texto = ["nome", "sexo", "disponibilidade"]
+    # Reconhece o nome original da coluna da planilha.
+    df = df.rename(columns={
+        "Recebi as instâncias": "nome",
+        "Recebi as instâncias ": "nome",
+    })
 
-    for coluna in colunas_texto:
-        if coluna in df.columns:
-            df[coluna] = df[coluna].map(limpar_espacos)
+    df = normalizar_colunas(df)
 
     if "nome" in df.columns:
-        df["nome"] = df["nome"].map(
-            lambda valor: valor.title() if isinstance(valor, str) else valor
-        )
-
-    equivalencia_sexo = {
-        "F": "F",
-        "FEM": "F",
-        "FEMININO": "F",
-        "M": "M",
-        "MASC": "M",
-        "MASCULINO": "M",
-    }
+        df["nome"] = df["nome"].map(limpar_espacos)
 
     if "sexo" in df.columns:
         df["sexo"] = df["sexo"].map(
-            lambda valor: equivalencia_sexo.get(
-                padronizar_texto(valor),
-                padronizar_texto(valor)
-            )
+            lambda x: {
+                "F": "F",
+                "FEMININO": "F",
+                "FEM": "F",
+                "M": "M",
+                "MASCULINO": "M",
+                "MASC": "M",
+            }.get(padronizar_texto(x), padronizar_texto(x))
         )
-
-    equivalencia_turno = {
-        "MANHA": "MANHÃ",
-        "TARDE": "TARDE",
-    }
 
     if "disponibilidade" in df.columns:
         df["disponibilidade"] = df["disponibilidade"].map(
-            lambda valor: equivalencia_turno.get(
-                padronizar_texto(valor),
-                padronizar_texto(valor)
-            )
+            lambda x: {
+                "MANHA": "MANHÃ",
+                "TARDE": "TARDE",
+            }.get(padronizar_texto(x), padronizar_texto(x))
         )
 
     return df
 
 
 def padronizar_turmas(df):
-    """Padroniza os dados da aba Turmas."""
-    df = normalizar_colunas(df.copy())
+    df = df.copy()
 
-    if "turno" in df.columns:
-        equivalencia_turno = {
-            "MANHA": "MANHÃ",
-            "TARDE": "TARDE",
-        }
+    # A planilha original utiliza uma tabela de recursos.
+    df = df.rename(columns={
+        "Recursos": "recursos",
+        "Quantidade": "quantidade",
+    })
 
-        df["turno"] = df["turno"].map(
-            lambda valor: equivalencia_turno.get(
-                padronizar_texto(valor),
-                padronizar_texto(valor)
-            )
-        )
+    df = normalizar_colunas(df)
 
-    return df
+    if "recursos" not in df.columns or "quantidade" not in df.columns:
+        return df
+
+    dados = {}
+
+    for _, linha in df.iterrows():
+        recurso = padronizar_texto(linha["recursos"])
+        quantidade = linha["quantidade"]
+
+        if isinstance(recurso, str):
+            dados[recurso] = quantidade
+
+    configuracoes = []
+
+    for turno in ["MANHA", "TARDE"]:
+        quantidade_turmas = dados.get(f"TURMAS_{turno}")
+        capacidade = dados.get(f"VAGAS_{turno}")
+
+        if quantidade_turmas is not None and capacidade is not None:
+            configuracoes.append({
+                "turno": turno,
+                "quantidade_turmas": quantidade_turmas,
+                "capacidade": capacidade,
+            })
+
+    return pd.DataFrame(configuracoes)
 
 
 def padronizar_dados(dados):
-    """
-    Padroniza as duas abas recebidas pela leitura da planilha.
 
-    Também mantém compatibilidade com chamadas antigas que enviam
-    diretamente um DataFrame de alunos.
-    """
-    if hasattr(dados, "columns"):
+    if isinstance(dados, pd.DataFrame):
         return padronizar_alunos(dados)
 
     if not isinstance(dados, dict):
         raise TypeError(
-            "Os dados devem ser um DataFrame ou um dicionário com as abas."
-        )
-
-    if "alunos" not in dados or "turmas" not in dados:
-        raise ValueError(
-            "Os dados devem conter as abas 'alunos' e 'turmas'."
+            "Os dados devem ser um DataFrame ou dicionário."
         )
 
     return {
